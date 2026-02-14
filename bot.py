@@ -4,8 +4,20 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 import os
-print("ENV BOT_TOKEN RAW:", repr(os.getenv("BOT_TOKEN")))
-TOKEN = os.getenv("BOT_TOKEN")
+
+def load_token():
+    t = os.getenv("BOT_TOKEN")
+    if t:
+        return t.strip()
+
+    try:
+        with open("/etc/secrets/token.txt") as f:
+            return f.read().strip()
+    except:
+        return None
+
+TOKEN = load_token()
+print("TOKEN SOURCE OK:", bool(TOKEN))
 
 
 
