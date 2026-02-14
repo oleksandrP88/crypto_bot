@@ -4,7 +4,9 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 import os
+print("ENV BOT_TOKEN RAW:", repr(os.getenv("BOT_TOKEN")))
 TOKEN = os.getenv("BOT_TOKEN")
+
 
 
 
