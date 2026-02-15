@@ -373,6 +373,21 @@ async def check_alerts(ctx):
     save_json(ALERTS_FILE,alerts)
 
 # ---------- startup ----------
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+def run_web():
+    port = int(os.getenv("PORT", 10000))
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+
+threading.Thread(target=run_web).start()
+
 
 alerts = load_json(ALERTS_FILE, [])
 portfolio = load_json(PORTFOLIO_FILE, {})
