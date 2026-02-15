@@ -1,5 +1,4 @@
 anyio==4.12.1
-APScheduler==3.11.2
 certifi==2026.1.4
 charset-normalizer==3.4.4
 h11==0.16.0
