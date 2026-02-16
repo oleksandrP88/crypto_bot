@@ -23,13 +23,10 @@ from telegram.ext import (
     filters,
 )
 
-<<<<<<< HEAD
 import os
 TOKEN = os.getenv("TOKEN")
 
-=======
-TOKEN = "7826400985:AAFDjf4YF0I9YbxwZ8xLCLHt0Vd3ZP5C1lo"
->>>>>>> 3caab20 (update)
+
 
 # ---------- files ----------
 
