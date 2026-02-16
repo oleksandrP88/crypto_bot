@@ -1,18 +1,11 @@
 import json
 import requests
 import io
-<<<<<<< HEAD
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-=======
 import matplotlib.pyplot as plt
 
 #venv\Scripts\activate.bat
 #cd crypto_bot
 #python bot.py
->>>>>>> 3caab20 (update)
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -24,8 +17,7 @@ from telegram.ext import (
 )
 
 import os
-TOKEN = os.getenv("TOKEN")
-
+TOKEN = os.getenv("TG_TOKEN")
 
 
 # ---------- files ----------
@@ -383,11 +375,6 @@ async def check_alerts(ctx):
 
 # ---------- startup ----------
 
-<<<<<<< HEAD
-
-
-=======
->>>>>>> 3caab20 (update)
 alerts = load_json(ALERTS_FILE, [])
 portfolio = load_json(PORTFOLIO_FILE, {})
 settings = load_json(SETTINGS_FILE, {})
@@ -398,11 +385,4 @@ app.add_handler(MessageHandler(filters.TEXT, router))
 app.job_queue.run_repeating(check_alerts, interval=60, first=10)
 
 print("Bot started")
-PORT = int(os.getenv("PORT", 10000))
-URL = os.getenv("RENDER_EXTERNAL_URL")
-
-app.run_webhook(
-    listen="0.0.0.0",
-    port=PORT,
-    webhook_url=URL,
-)
+app.run_polling()
