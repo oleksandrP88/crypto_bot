@@ -26,7 +26,15 @@ SETTINGS_FILE = "settings.json"
 # ---------- globals ----------
 
 COINS = ["BTC","ETH","SOL","BNB","XRP","TON"]
-MAX_ALERTS_PER_USER = 5
+
+CG_MAP = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "BNB": "binancecoin",
+    "XRP": "ripple",
+    "TON": "the-open-network",
+}
 
 alerts = []
 portfolio = {}
@@ -49,20 +57,11 @@ def save_json(path, data):
 # ---------- currency ----------
 
 def get_cur(uid):
-    return settings.get(uid, {}).get("cur", "USD")
+    return settings.get(uid, {}).get("cur", "usd").lower()
 
 def set_cur(uid, cur):
-    settings.setdefault(uid, {})["cur"] = cur
+    settings.setdefault(uid, {})["cur"] = cur.lower()
     save_json(SETTINGS_FILE, settings)
-
-def fx(cur):
-    if cur == "USD":
-        return 1
-    try:
-        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=5).json()
-        return float(r["rates"][cur])
-    except:
-        return 1
 
 # ---------- keyboards ----------
 
@@ -84,8 +83,13 @@ COIN_KB = kb([
     ["⬅️ Назад"]
 ])
 
+CUR_KB = kb([
+    ["USD","EUR","UAH"],
+    ["⬅️ Назад"]
+])
+
 ALERT_KB = kb([
-    ["➕ Добавить","📋 Мои алерты","❌ Удалить алерты"],
+    ["➕ Добавить","📋 Мои алерты"],
     ["⬅️ Назад"]
 ])
 
@@ -94,51 +98,46 @@ PORT_KB = kb([
     ["⬅️ Назад"]
 ])
 
-CUR_KB = kb([
-    ["USD","EUR","UAH"],
-    ["⬅️ Назад"]
-])
-
 LANG_KB = kb([
     ["🇷🇺","🇺🇦","🇬🇧"]
 ])
 
-# ---------- api ----------
+# ---------- CoinGecko API ----------
 
-def price(sym):
-    try:
-        return float(requests.get(
-            f"https://api.binance.com/api/v3/ticker/price?symbol={sym}USDT",
-            timeout=5).json()["price"])
-    except:
-        return None
+def cg_price(sym, cur):
+    cid = CG_MAP[sym]
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={cid}&vs_currencies={cur}"
+    r = requests.get(url, timeout=10).json()
+    return r.get(cid, {}).get(cur)
 
-def change24(sym):
-    try:
-        return float(requests.get(
-            f"https://api.binance.com/api/v3/ticker/24hr?symbol={sym}USDT",
-            timeout=5).json()["priceChangePercent"])
-    except:
-        return 0
+def cg_change24(sym):
+    cid = CG_MAP[sym]
+    url = f"https://api.coingecko.com/api/v3/coins/{cid}"
+    r = requests.get(url, timeout=10).json()
+    return r["market_data"]["price_change_percentage_24h"]
 
-def top_movers(top=True):
-    data = requests.get(
-        "https://api.binance.com/api/v3/ticker/24hr",
-        timeout=8).json()
+def cg_top(top=True):
+    r = requests.get(
+        "https://api.coingecko.com/api/v3/coins/markets",
+        params={"vs_currency":"usd","order":"market_cap_desc","per_page":50},
+        timeout=10
+    ).json()
 
-    filt = [d for d in data if d["symbol"].endswith("USDT") and len(d["symbol"]) < 12]
-    filt.sort(key=lambda x: float(x["priceChangePercent"]), reverse=top)
-    return filt[:5]
+    r.sort(key=lambda x: x["price_change_percentage_24h"] or 0, reverse=top)
+    return r[:5]
 
-def chart(sym):
-    k = requests.get(
-        f"https://api.binance.com/api/v3/klines?symbol={sym}USDT&interval=1h&limit=48",
-        timeout=8).json()
+def cg_chart(sym):
+    cid = CG_MAP[sym]
+    r = requests.get(
+        f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart",
+        params={"vs_currency":"usd","days":2},
+        timeout=10
+    ).json()
 
-    closes = [float(x[4]) for x in k]
+    prices = [p[1] for p in r["prices"]]
 
     plt.figure()
-    plt.plot(closes)
+    plt.plot(prices)
     plt.title(sym)
     buf = io.BytesIO()
     plt.savefig(buf, format="png")
@@ -148,103 +147,74 @@ def chart(sym):
 
 # ---------- AI lite ----------
 
-def ai_market_summary():
-    data = top_movers(True)
-    avg = sum(float(x["priceChangePercent"]) for x in data)/len(data)
+def ai_summary():
+    top = cg_top(True)
+    avg = sum(x["price_change_percentage_24h"] or 0 for x in top)/len(top)
 
-    if avg > 5:
-        return "🚀 Сильный рост рынка"
-    if avg > 1:
-        return "🙂 Умеренный рост"
-    if avg > -1:
-        return "😐 Боковик"
+    if avg > 5: return "🚀 Рынок перегрет вверх"
+    if avg > 1: return "🙂 Рост"
+    if avg > -1: return "😐 Боковик"
     return "⚠️ Давление вниз"
 
 # ---------- start ----------
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_chat.id)
-    user_state[uid] = "onboard_lang"
-    await update.message.reply_text("🌍 Choose language:", reply_markup=LANG_KB)
+    user_state[uid] = "lang"
+    await update.message.reply_text("🌍 Language:", reply_markup=LANG_KB)
 
 # ---------- router ----------
 
 async def router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_chat.id)
     text = update.message.text
-    cur = get_cur(uid)
-    rate = fx(cur)
 
-    # ===== onboarding =====
-
-    if user_state.get(uid) == "onboard_lang":
-        m = {"🇷🇺":"ru","🇺🇦":"uk","🇬🇧":"en"}
-        if text in m:
-            user_state[uid] = "onboard_cur"
-            await update.message.reply_text("💱 Валюта:", reply_markup=CUR_KB)
+    # onboarding
+    if user_state.get(uid) == "lang":
+        user_state[uid] = "cur"
+        await update.message.reply_text("💱 Currency:", reply_markup=CUR_KB)
         return
 
-    if user_state.get(uid) == "onboard_cur":
+    if user_state.get(uid) == "cur":
         if text in ["USD","EUR","UAH"]:
             set_cur(uid, text)
             user_state.pop(uid)
-            await update.message.reply_text(
-                "🤖 Готово. Главное меню:",
-                reply_markup=MAIN
-            )
+            await update.message.reply_text("🤖 Ready", reply_markup=MAIN)
         return
 
-    # ===== STATE FLOWS =====
+    cur = get_cur(uid)
 
-    if user_state.get(uid) == "chart" and text in COINS:
-        await update.message.reply_photo(chart(text))
-        user_state.pop(uid)
-        return
-
-    if user_state.get(uid) == "alert_coin" and text in COINS:
-        user_state[uid] = ("alert_price", text)
-        await update.message.reply_text("Цена:")
-        return
-
-    if isinstance(user_state.get(uid), tuple) and user_state[uid][0] == "alert_price":
-        sym = user_state[uid][1]
-        try:
-            target = float(text)
-        except:
-            await update.message.reply_text("Нужно число")
-            return
-
-        alerts.append({"chat":uid,"sym":sym,"target":target,"last":0})
-        save_json(ALERTS_FILE, alerts)
-        user_state.pop(uid)
-        await update.message.reply_text("🔔 Добавлен", reply_markup=MAIN)
-        return
-
-    if user_state.get(uid) == "pf_coin" and text in COINS:
-        user_state[uid] = ("pf_amt", text)
-        await update.message.reply_text("Количество:")
-        return
-
-    if isinstance(user_state.get(uid), tuple) and user_state[uid][0] == "pf_amt":
-        sym = user_state[uid][1]
-        try:
-            amt = float(text)
-        except:
-            await update.message.reply_text("Нужно число")
-            return
-
-        p = price(sym) or 0
-        portfolio.setdefault(uid,{})
-        portfolio[uid][sym] = {"amt":amt,"entry":p}
-        save_json(PORTFOLIO_FILE, portfolio)
-        user_state.pop(uid)
-        await update.message.reply_text("Добавлено", reply_markup=MAIN)
-        return
-
-    # ===== NAV =====
-
+    # nav
     if text == "📈 Цена":
         await update.message.reply_text("Монета:", reply_markup=COIN_KB)
+        return
+
+    if text in COINS:
+        p = cg_price(text, cur)
+        if not p:
+            await update.message.reply_text("Нет цены")
+            return
+        c = cg_change24(text)
+        await update.message.reply_text(f"{text}\n{p:,.2f} {cur.upper()}\n24ч {c:+.2f}%")
+        return
+
+    if text == "📊 Рынок":
+        lines = [f"{s} {cg_change24(s):+.1f}%" for s in COINS]
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    if text == "🔥 Топ рост":
+        t = cg_top(True)
+        await update.message.reply_text("\n".join(
+            f"{x['symbol'].upper()} {x['price_change_percentage_24h']:+.1f}%"
+            for x in t))
+        return
+
+    if text == "💀 Топ падение":
+        t = cg_top(False)
+        await update.message.reply_text("\n".join(
+            f"{x['symbol'].upper()} {x['price_change_percentage_24h']:+.1f}%"
+            for x in t))
         return
 
     if text == "📉 График":
@@ -252,104 +222,23 @@ async def router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Монета:", reply_markup=COIN_KB)
         return
 
-    if text in COINS:
-        p = price(text)
-        if not p:
-            await update.message.reply_text("Нет цены")
-            return
-        p *= rate
-        c = change24(text)
-        await update.message.reply_text(f"{text}\n{p:,.2f} {cur}\n24ч {c:+.2f}%")
-        return
-
-    if text == "📊 Рынок":
-        await update.message.reply_text(
-            "\n".join(f"{s} {change24(s):+.1f}%" for s in COINS)
-        )
-        return
-
-    if text == "🔥 Топ рост":
-        t = top_movers(True)
-        await update.message.reply_text("\n".join(
-            f"{x['symbol']} {float(x['priceChangePercent']):+.1f}%"
-            for x in t))
-        return
-
-    if text == "💀 Топ падение":
-        t = top_movers(False)
-        await update.message.reply_text("\n".join(
-            f"{x['symbol']} {float(x['priceChangePercent']):+.1f}%"
-            for x in t))
+    if user_state.get(uid) == "chart" and text in COINS:
+        await update.message.reply_photo(cg_chart(text))
+        user_state.pop(uid)
         return
 
     if text == "🧠 AI обзор":
-        await update.message.reply_text(ai_market_summary())
-        return
-
-    if text == "🔔 Алерты":
-        await update.message.reply_text("Алерты:", reply_markup=ALERT_KB)
-        return
-
-    if text == "➕ Добавить":
-        user_state[uid] = "alert_coin"
-        await update.message.reply_text("Монета:", reply_markup=COIN_KB)
-        return
-
-    if text == "📋 Мои алерты":
-        ua=[a for a in alerts if a["chat"]==uid]
-        await update.message.reply_text(
-            "\n".join(f"{a['sym']} → {a['target']}" for a in ua) or "Пусто"
-        )
-        return
-
-    if text == "❌ Удалить алерты":
-        alerts[:] = [a for a in alerts if a["chat"]!=uid]
-        save_json(ALERTS_FILE, alerts)
-        await update.message.reply_text("Удалены")
-        return
-
-    if text == "📦 Портфель":
-        await update.message.reply_text("Портфель:", reply_markup=PORT_KB)
-        return
-
-    if text == "➕ Добавить позицию":
-        user_state[uid] = "pf_coin"
-        await update.message.reply_text("Монета:", reply_markup=COIN_KB)
-        return
-
-    if text == "📦 Показать":
-        pf = portfolio.get(uid,{})
-        lines=[]
-        total=0
-        for s,d in pf.items():
-            curp = price(s) or 0
-            v = curp*d["amt"]*rate
-            total+=v
-            lines.append(f"{s} → {v:,.2f} {cur}")
-        await update.message.reply_text(
-            "\n".join(lines)+f"\n💰 {total:,.2f}"
-        )
+        await update.message.reply_text(ai_summary())
         return
 
     if text == "💱 Валюта":
-        user_state[uid]="onboard_cur"
+        user_state[uid] = "cur"
         await update.message.reply_text("Валюта:", reply_markup=CUR_KB)
         return
 
     if text == "⬅️ Назад":
-        user_state.pop(uid,None)
-        await update.message.reply_text("Главное меню", reply_markup=MAIN)
-
-# ---------- alerts checker ----------
-
-async def check_alerts(ctx):
-    app=ctx.application
-    for a in alerts:
-        p=price(a["sym"])
-        if p and p>=a["target"] and abs(p-a["last"])>1:
-            await app.bot.send_message(a["chat"],f"🚀 {a['sym']} → {p}")
-            a["last"]=p
-    save_json(ALERTS_FILE,alerts)
+        user_state.pop(uid, None)
+        await update.message.reply_text("Меню", reply_markup=MAIN)
 
 # ---------- startup ----------
 
@@ -360,7 +249,6 @@ settings = load_json(SETTINGS_FILE, {})
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT, router))
-app.job_queue.run_repeating(check_alerts, interval=60, first=10)
 
 print("Bot started")
 app.run_polling()
